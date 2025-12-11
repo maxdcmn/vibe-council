@@ -420,7 +420,8 @@ export default function Index() {
       console.error(`Video element not found: video-3d-${agentId}`);
       log(`✗ Video element not found for agent ${agentId}`);
     }
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // setupAnalyzer is stable and doesn't need to be in deps
 
   const handleFocusChange = (value: string) => {
     if (value === "none") {

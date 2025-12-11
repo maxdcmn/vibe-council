@@ -59,8 +59,8 @@ export default function Council() {
   // Moderator State
   const activeSpeakerRef = useRef<string | null>(null);
   const lastActiveTimeRef = useRef<number>(0);
-  const SPEAKING_THRESHOLD = 10; 
-  const SILENCE_TIMEOUT = 1000; 
+  const SPEAKING_THRESHOLD = 30; // Increased to avoid false positives from feedback/background noise
+  const SILENCE_TIMEOUT = 1500; // Increased timeout to prevent rapid switching 
 
   const log = (msg: string) => {
     setLogs((prev) => [...prev, `${new Date().toLocaleTimeString()}: ${msg}`]);
@@ -226,13 +226,19 @@ export default function Council() {
     const source = ctx.createMediaStreamSource(stream);
     agentOutputSources.current.set(agentId, source);
 
+    // Add high-pass filter to reduce low-frequency rumble/feedback
+    const highPassFilter = ctx.createBiquadFilter();
+    highPassFilter.type = 'highpass';
+    highPassFilter.frequency.value = 80; // Filter out frequencies below 80Hz to reduce rumble
+
     // Create Gain Node for this agent (The "Mouth Control")
     const gainNode = ctx.createGain();
     gainNode.gain.value = 1.0;
     agentGainNodes.current.set(agentId, gainNode);
 
-    // Connect Source -> Gain
-    source.connect(gainNode);
+    // Connect: Source -> High-Pass Filter -> Gain
+    source.connect(highPassFilter);
+    highPassFilter.connect(gainNode);
 
     // 1. Connect Gain -> User Speakers
     gainNode.connect(ctx.destination);
@@ -244,9 +250,10 @@ export default function Council() {
       }
     });
 
-    // 3. Setup Analyzer
-    setupAnalyzer(source, agentId);
-  }, []);
+    // 3. Setup Analyzer (analyze after filtering)
+    setupAnalyzer(highPassFilter, agentId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // setupAnalyzer is stable and doesn't need to be in deps
 
   const broadcastContext = (message: string, excludeId?: string) => {
     agentsRef.current.forEach(agent => {
@@ -307,19 +314,22 @@ export default function Council() {
     if (!audioContextRef.current) return;
     const analyser = audioContextRef.current.createAnalyser();
     analyser.fftSize = 256;
+    analyser.smoothingTimeConstant = 0.8; // Add smoothing to reduce noise
     source.connect(analyser);
     
     const data = new Uint8Array(analyser.frequencyBinCount);
+    let consecutiveHighReadings = 0; // Track consecutive high readings to avoid false positives
     const update = () => {
         analyser.getByteFrequencyData(data);
         const sum = data.reduce((a, b) => a + b, 0);
         const avg = sum / data.length;
 
-        // Moderator Logic
+        // Moderator Logic - require multiple consecutive high readings to avoid feedback artifacts
         if (avg > SPEAKING_THRESHOLD) {
-            lastActiveTimeRef.current = Date.now();
-            
-            if (!activeSpeakerRef.current) {
+            consecutiveHighReadings++;
+            // Require at least 3 consecutive frames above threshold to avoid feedback artifacts
+            if (consecutiveHighReadings >= 3 && !activeSpeakerRef.current) {
+                lastActiveTimeRef.current = Date.now();
                 activeSpeakerRef.current = agentId;
                 setActiveSpeakerId(agentId);
                 
@@ -336,6 +346,8 @@ export default function Council() {
                     }
                 });
             }
+        } else {
+            consecutiveHighReadings = 0; // Reset counter when below threshold
         }
 
         setAgents((prev) => 
