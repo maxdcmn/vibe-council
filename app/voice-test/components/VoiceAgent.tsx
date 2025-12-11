@@ -28,7 +28,7 @@ export function VoiceAgent({
     audioContext,
     queueLength,
     isPlaying,
-  } = useVoiceAgent({ agentName });
+  } = useVoiceAgent({ agentId, agentName });
 
   const isConnected = connectionState === "connected";
 
