@@ -6,6 +6,7 @@ import { ArrowRight, Plus, X } from "lucide-react";
 import CircleScene from "@/components/three/circle-scene";
 import AnamPersona from "@/components/AnamPersona";
 import { Button } from "@/components/ui/button";
+import { ANAM_PERSONAS } from "@/lib/anam-personas";
 import {
   Select,
   SelectContent,
@@ -25,6 +26,7 @@ interface Agent {
   client?: any;
   startSession?: () => Promise<void>;
   color: string;
+  personaKey?: string;
 }
 
 const SYSTEM_PROMPT_TEMPLATE = (agentName: string, userName: string, topic: string) => `
@@ -40,14 +42,20 @@ PROTOCOL:
 5. STAY IN CHARACTER.
 `;
 
-const PERSONAS = [
-  { id: 'optimist', name: 'The Optimist', basePrompt: 'You are an eternal optimist. You see the bright side of everything.', color: "#ff4444" },
-  { id: 'pessimist', name: 'The Pessimist', basePrompt: 'You are a grumpy pessimist. You find flaws in everything.', color: "#4488ff" },
-  { id: 'realist', name: 'The Realist', basePrompt: 'You are a pragmatist. You focus on facts and practical solutions.', color: "#44ff88" },
-  { id: 'joker', name: 'The Joker', basePrompt: 'You are a comedian. You make jokes about everything.', color: "#ffcc00" },
-  { id: 'philosopher', name: 'The Philosopher', basePrompt: 'You are a deep thinker. You ask existential questions.', color: "#ff44ff" },
-  { id: 'skeptic', name: 'The Skeptic', basePrompt: 'You are highly skeptical. You question everything and demand evidence.', color: "#ff8844" },
+// Generate colors for personas (using a color palette)
+const PERSONA_COLORS = [
+  "#ff4444", "#4488ff", "#44ff88", "#ffcc00", "#ff44ff", "#ff8844"
 ];
+
+// Convert ANAM_PERSONAS to the format expected by the UI
+const PERSONAS = Object.entries(ANAM_PERSONAS).map(([id, config], index) => ({
+  id,
+  name: config.name,
+  basePrompt: config.systemPrompt,
+  color: PERSONA_COLORS[index % PERSONA_COLORS.length],
+  personaId: config.personaId,
+  llmId: config.llmId,
+}));
 
 const scenarios = [
   { value: "life", label: "Life decisions" },
@@ -222,6 +230,7 @@ export default function Index() {
           audioLevel: 0,
           isSpeaking: false,
           color: persona.color,
+          personaKey: persona.id,
         },
       ];
       agentsRef.current = newAgents;
@@ -297,6 +306,79 @@ export default function Index() {
     log('All sessions started!');
   };
 
+  const setupAnalyzer = (source: AudioNode, agentId: string) => {
+    if (!audioContextRef.current) return;
+    const analyser = audioContextRef.current.createAnalyser();
+    analyser.fftSize = 256;
+    source.connect(analyser);
+    
+    const data = new Uint8Array(analyser.frequencyBinCount);
+    const update = () => {
+      analyser.getByteFrequencyData(data);
+      const sum = data.reduce((a, b) => a + b, 0);
+      const avg = sum / data.length;
+
+      if (avg > SPEAKING_THRESHOLD) {
+        lastActiveTimeRef.current = Date.now();
+        
+        if (!activeSpeakerRef.current) {
+          activeSpeakerRef.current = agentId;
+          setActiveSpeakerId(agentId);
+          
+          const speaker = agentsRef.current.find(a => a.id === agentId);
+          if (speaker) {
+            log(`${speaker.name} took the floor!`);
+            broadcastContext(`${speaker.name} has started speaking. Listen to them.`, agentId);
+          }
+          
+          agentGainNodes.current.forEach((gain, id) => {
+            if (id !== agentId) {
+              gain.gain.setTargetAtTime(0.0, audioContextRef.current!.currentTime, 0.1);
+            }
+          });
+        }
+      }
+
+      setAgents((prev) => 
+        prev.map((a) => (a.id === agentId ? { ...a, audioLevel: avg, isSpeaking: activeSpeakerRef.current === agentId } : a))
+      );
+      requestAnimationFrame(update);
+    };
+    requestAnimationFrame(update);
+  };
+
+  const broadcastContext = (message: string, excludeId?: string) => {
+    agentsRef.current.forEach(agent => {
+      if (agent.id !== excludeId && agent.client) {
+        try {
+          agent.client.talk(`[System Event: ${message}]`);
+        } catch (e) {
+          console.error(`Failed to broadcast to ${agent.name}`, e);
+        }
+      }
+    });
+  };
+
+  const focusAgent = (agentId: string) => {
+    activeSpeakerRef.current = agentId;
+    setActiveSpeakerId(agentId);
+    lastActiveTimeRef.current = Date.now();
+    
+    const speaker = agentsRef.current.find(a => a.id === agentId);
+    if (speaker) {
+      log(`Manually focused: ${speaker.name}`);
+      broadcastContext(`${speaker.name} has been given the floor. Listen to them.`, agentId);
+    }
+    
+    agentGainNodes.current.forEach((gain, id) => {
+      if (id !== agentId) {
+        gain.gain.setTargetAtTime(0.0, audioContextRef.current!.currentTime, 0.1);
+      } else {
+        gain.gain.setTargetAtTime(1.0, audioContextRef.current!.currentTime, 0.1);
+      }
+    });
+  };
+
   const handleOutputStream = useCallback((agentId: string, stream: MediaStream) => {
     if (!audioContextRef.current) return;
     
@@ -339,79 +421,6 @@ export default function Index() {
       log(`✗ Video element not found for agent ${agentId}`);
     }
   }, []);
-
-  const broadcastContext = (message: string, excludeId?: string) => {
-    agentsRef.current.forEach(agent => {
-      if (agent.id !== excludeId && agent.client) {
-        try {
-          agent.client.talk(`[System Event: ${message}]`);
-        } catch (e) {
-          console.error(`Failed to broadcast to ${agent.name}`, e);
-        }
-      }
-    });
-  };
-
-  const focusAgent = (agentId: string) => {
-    activeSpeakerRef.current = agentId;
-    setActiveSpeakerId(agentId);
-    lastActiveTimeRef.current = Date.now();
-    
-    const speaker = agentsRef.current.find(a => a.id === agentId);
-    if (speaker) {
-      log(`Manually focused: ${speaker.name}`);
-      broadcastContext(`${speaker.name} has been given the floor. Listen to them.`, agentId);
-    }
-    
-    agentGainNodes.current.forEach((gain, id) => {
-      if (id !== agentId) {
-        gain.gain.setTargetAtTime(0.0, audioContextRef.current!.currentTime, 0.1);
-      } else {
-        gain.gain.setTargetAtTime(1.0, audioContextRef.current!.currentTime, 0.1);
-      }
-    });
-  };
-
-  const setupAnalyzer = (source: AudioNode, agentId: string) => {
-    if (!audioContextRef.current) return;
-    const analyser = audioContextRef.current.createAnalyser();
-    analyser.fftSize = 256;
-    source.connect(analyser);
-    
-    const data = new Uint8Array(analyser.frequencyBinCount);
-    const update = () => {
-      analyser.getByteFrequencyData(data);
-      const sum = data.reduce((a, b) => a + b, 0);
-      const avg = sum / data.length;
-
-      if (avg > SPEAKING_THRESHOLD) {
-        lastActiveTimeRef.current = Date.now();
-        
-        if (!activeSpeakerRef.current) {
-          activeSpeakerRef.current = agentId;
-          setActiveSpeakerId(agentId);
-          
-          const speaker = agentsRef.current.find(a => a.id === agentId);
-          if (speaker) {
-            log(`${speaker.name} took the floor!`);
-            broadcastContext(`${speaker.name} has started speaking. Listen to them.`, agentId);
-          }
-          
-          agentGainNodes.current.forEach((gain, id) => {
-            if (id !== agentId) {
-              gain.gain.setTargetAtTime(0.0, audioContextRef.current!.currentTime, 0.1);
-            }
-          });
-        }
-      }
-
-      setAgents((prev) => 
-        prev.map((a) => (a.id === agentId ? { ...a, audioLevel: avg, isSpeaking: activeSpeakerRef.current === agentId } : a))
-      );
-      requestAnimationFrame(update);
-    };
-    requestAnimationFrame(update);
-  };
 
   const handleFocusChange = (value: string) => {
     if (value === "none") {
@@ -617,7 +626,7 @@ export default function Index() {
           </div>
 
           {/* Hidden Agents Panel for AnamPersona components */}
-          <div className="hidden">
+              <div className="hidden">
             {agents.map((agent) => (
               <div key={agent.id} id={`agent-container-${agent.id}`}>
                 <AnamPersona
@@ -625,6 +634,7 @@ export default function Index() {
                     name: agent.name,
                     systemPrompt: agent.systemPrompt,
                   }}
+                  personaId={agent.personaKey}
                   inputStream={agent.inputStream}
                   onOutputStreamReady={(stream) => handleOutputStream(agent.id, stream)}
                   onClientReady={(client) => handleClientReady(agent.id, client)}

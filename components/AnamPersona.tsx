@@ -5,6 +5,7 @@ import { createClient } from '@anam-ai/js-sdk';
 
 interface AnamPersonaProps {
   personaConfig?: any;
+  personaId?: string;
   onClientReady?: (client: any) => void;
   inputStream?: MediaStream;
   onOutputStreamReady?: (outputStream: MediaStream) => void;
@@ -14,6 +15,7 @@ interface AnamPersonaProps {
 
 export default function AnamPersona({
   personaConfig,
+  personaId,
   onClientReady,
   inputStream,
   onOutputStreamReady,
@@ -34,7 +36,7 @@ export default function AnamPersona({
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ personaConfig }),
+        body: JSON.stringify({ personaId, personaConfig }),
       });
       const data = await response.json();
 
