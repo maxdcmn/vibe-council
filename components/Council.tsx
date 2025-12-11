@@ -197,7 +197,7 @@ export default function Council() {
     })));
 
     // 2. Broadcast (Context Injection for active sessions)
-    broadcastContext(`Participant Update. Current Council: ${names}`);
+    //broadcastContext(`Participant Update. Current Council: ${names}`);
   };
 
   const handleClientReady = (id: string, client: any) => {
@@ -271,7 +271,7 @@ export default function Council() {
     const speaker = agentsRef.current.find(a => a.id === agentId);
     if (speaker) {
       log(`Manually focused: ${speaker.name}`);
-      broadcastContext(`${speaker.name} has been given the floor. Listen to them.`, agentId);
+      //broadcastContext(`${speaker.name} has been given the floor. Listen to them.`, agentId);
     }
     
     // Mute all other agents
@@ -327,7 +327,7 @@ export default function Council() {
                 const speaker = agentsRef.current.find(a => a.id === agentId);
                 if (speaker) {
                     log(`${speaker.name} took the floor!`);
-                    broadcastContext(`${speaker.name} has started speaking. Listen to them.`, agentId);
+                    //broadcastContext(`${speaker.name} has started speaking. Listen to them.`, agentId);
                 }
                 
                 agentGainNodes.current.forEach((gain, id) => {
