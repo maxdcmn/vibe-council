@@ -3,7 +3,19 @@
 import { useEffect, useRef, useState } from 'react';
 import { createClient } from '@anam-ai/js-sdk';
 
-export default function AnamPersona() {
+interface AnamPersonaProps {
+  personaConfig?: any;
+  onClientReady?: (client: any) => void;
+  inputStream?: MediaStream;
+  onOutputStreamReady?: (outputStream: MediaStream) => void;
+}
+
+export default function AnamPersona({
+  personaConfig,
+  onClientReady,
+  inputStream,
+  onOutputStreamReady,
+}: AnamPersonaProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isSessionActive, setIsSessionActive] = useState(false);
   const [status, setStatus] = useState('Ready to start');
@@ -14,6 +26,10 @@ export default function AnamPersona() {
       setStatus('Creating session...');
       const response = await fetch('/api/anam/session-token', {
         method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ personaConfig }),
       });
       const data = await response.json();
 
@@ -25,8 +41,28 @@ export default function AnamPersona() {
       const client = createClient(data.sessionToken);
       setAnamClient(client);
 
+      if (onClientReady) {
+        onClientReady(client);
+      }
+
       if (videoRef.current) {
-        await client.streamToVideoElement('anam-persona-video');
+        // Use stream() method as suggested to get direct access to the stream
+        // Default to microphone if no inputStream provided (though Council should provide one)
+        const input = inputStream || undefined; 
+        
+        // Assuming client.stream returns [MediaStream] or similar based on user snippet
+        // "const [videoStream1] = await anamClient1.stream(userInputStream);"
+        const result = await client.stream(input);
+        
+        // Handle both array return (as per user snippet) or single object
+        const outputStream = Array.isArray(result) ? result[0] : result;
+
+        videoRef.current.srcObject = outputStream;
+        
+        if (onOutputStreamReady) {
+            onOutputStreamReady(outputStream);
+        }
+
         setIsSessionActive(true);
         setStatus('Connected! You can speak now.');
       }
@@ -35,6 +71,7 @@ export default function AnamPersona() {
       setStatus(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
+
 
   const stopSession = () => {
     if (anamClient) {
@@ -61,10 +98,11 @@ export default function AnamPersona() {
     <div className="flex flex-col items-center gap-4 p-4 border rounded-lg shadow-sm bg-card text-card-foreground">
       <div className="relative w-full max-w-md aspect-video bg-muted rounded-md overflow-hidden">
         <video
-          id="anam-persona-video"
+          id={`anam-persona-video-${personaConfig?.name || 'default'}`}
           ref={videoRef}
           autoPlay
           playsInline
+          crossOrigin="anonymous"
           className="w-full h-full object-cover"
         />
         {!isSessionActive && (

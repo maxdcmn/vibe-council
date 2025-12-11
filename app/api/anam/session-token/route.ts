@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-export async function POST() {
+export async function POST(request: Request) {
   try {
     const apiKey = process.env.ANAM_API_KEY;
 
@@ -11,6 +11,20 @@ export async function POST() {
       );
     }
 
+    const body = await request.json();
+    const { personaConfig } = body;
+
+    const defaultPersonaConfig = {
+      name: 'Cara',
+      avatarId: '30fa96d0-26c4-4e55-94a0-517025942e18',
+      voiceId: '6bfbe25a-979d-40f3-a92b-5394170af54b',
+      llmId: '0934d97d-0c3a-4f33-91b0-5e136a0ef466',
+      systemPrompt:
+        'You are Cara, a helpful and friendly AI assistant. Keep responses conversational and concise.',
+    };
+
+    const finalPersonaConfig = { ...defaultPersonaConfig, ...personaConfig };
+
     const response = await fetch('https://api.anam.ai/v1/auth/session-token', {
       method: 'POST',
       headers: {
@@ -18,14 +32,7 @@ export async function POST() {
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        personaConfig: {
-          name: 'Cara',
-          avatarId: '30fa96d0-26c4-4e55-94a0-517025942e18',
-          voiceId: '6bfbe25a-979d-40f3-a92b-5394170af54b',
-          llmId: '0934d97d-0c3a-4f33-91b0-5e136a0ef466',
-          systemPrompt:
-            'You are Cara, a helpful and friendly AI assistant. Keep responses conversational and concise.',
-        },
+        personaConfig: finalPersonaConfig,
       }),
     });
 
