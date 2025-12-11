@@ -11,6 +11,7 @@ interface Agent {
   audioLevel: number;
   isSpeaking: boolean;
   client?: any; // Store the Anam client
+  startSession?: () => Promise<void>; // Store the start session function
 }
 
 const SYSTEM_PROMPT_TEMPLATE = (agentName: string, userName: string, topic: string) => `
@@ -179,6 +180,14 @@ export default function Council() {
     });
   };
 
+  const handleStartSessionReady = (id: string, startFn: () => Promise<void>) => {
+    setAgents(prev => {
+        const newAgents = prev.map(a => a.id === id ? { ...a, startSession: startFn } : a);
+        agentsRef.current = newAgents;
+        return newAgents;
+    });
+  };
+
   const handleOutputStream = useCallback((agentId: string, stream: MediaStream) => {
     if (!audioContextRef.current) return;
     
@@ -223,6 +232,47 @@ export default function Council() {
             }
         }
     });
+  };
+
+  const focusAgent = (agentId: string) => {
+    // Manually set this agent as the active speaker
+    activeSpeakerRef.current = agentId;
+    setActiveSpeakerId(agentId);
+    lastActiveTimeRef.current = Date.now();
+    
+    const speaker = agentsRef.current.find(a => a.id === agentId);
+    if (speaker) {
+      log(`Manually focused: ${speaker.name}`);
+      broadcastContext(`${speaker.name} has been given the floor. Listen to them.`, agentId);
+    }
+    
+    // Mute all other agents
+    agentGainNodes.current.forEach((gain, id) => {
+      if (id !== agentId) {
+        gain.gain.setTargetAtTime(0.0, audioContextRef.current!.currentTime, 0.1);
+      } else {
+        gain.gain.setTargetAtTime(1.0, audioContextRef.current!.currentTime, 0.1);
+      }
+    });
+  };
+
+  const startAllChats = async () => {
+    log('Starting all chats...');
+    for (let index = 0; index < agentsRef.current.length; index++) {
+      const agent = agentsRef.current[index];
+      if (agent.startSession) {
+        try {
+          log(`Starting session for ${agent.name}...`);
+          await agent.startSession();
+          // Wait a bit before starting the next one
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        } catch (e) {
+          console.error(`Failed to start session for ${agent.name}`, e);
+          log(`Error starting ${agent.name}: ${e instanceof Error ? e.message : 'Unknown error'}`);
+        }
+      }
+    }
+    log('All chats started!');
   };
 
   const setupAnalyzer = (source: AudioNode, agentId: string) => {
@@ -325,12 +375,16 @@ export default function Council() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 px-4">
         {agents.map((agent) => (
           <div 
-            key={agent.id} 
-            className={`flex flex-col bg-white p-4 rounded-xl shadow-md border relative transition-all duration-300 ${agent.isSpeaking ? 'ring-4 ring-green-500 scale-105 z-10' : ''}`}
+            key={agent.id}
+            onClick={() => focusAgent(agent.id)}
+            className={`flex flex-col bg-white p-4 rounded-xl shadow-md border relative transition-all duration-300 cursor-pointer hover:shadow-lg ${agent.isSpeaking ? 'ring-4 ring-green-500 scale-105 z-10' : ''}`}
           >
             <button 
-                onClick={() => removeAgent(agent.id)}
-                className="absolute top-2 right-2 text-gray-400 hover:text-red-500"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  removeAgent(agent.id);
+                }}
+                className="absolute top-2 right-2 text-gray-400 hover:text-red-500 z-20"
                 title="Remove Agent"
             >
                 ✕
@@ -344,6 +398,7 @@ export default function Council() {
               inputStream={agent.inputStream}
               onOutputStreamReady={(stream) => handleOutputStream(agent.id, stream)}
               onClientReady={(client) => handleClientReady(agent.id, client)}
+              onStartSessionReady={(startFn) => handleStartSessionReady(agent.id, startFn)}
               muted={true}
             />
             <div className="mt-3">

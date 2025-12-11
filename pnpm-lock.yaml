@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@anam-ai/js-sdk':
+        specifier: ^4.7.0
+        version: 4.7.0
       '@radix-ui/react-dropdown-menu':
         specifier: ^2.1.16
         version: 2.1.16(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
@@ -84,6 +87,9 @@ packages:
   '@alloc/quick-lru@5.2.0':
     resolution: {integrity: sha512-UrcABB+4bUrFABwbluTIBErXwvbsU/V7TZWfmbgJfbkwiBuziS9gxdODUyuiecfdGQ85jglMW6juS3+z5TsKLw==}
     engines: {node: '>=10'}
+
+  '@anam-ai/js-sdk@4.7.0':
+    resolution: {integrity: sha512-yrqWQtN1/Q44dzB/6pTG1Tiq1hA7U/noPrf56hrtpept6GmBTIEN96bGYQk/NLOTu1S8d5/wjZWkLlmoS/JfGA==}
 
   '@babel/code-frame@7.27.1':
     resolution: {integrity: sha512-cjQ7ZlQ0Mv3b47hABuTevyTuYN4i+loJKGeV9flcCgIK37cCXRh+L1bd3iBHlynerhQ7BhCkn2BPbQUL+rGqFg==}
@@ -2628,6 +2634,10 @@ packages:
 snapshots:
 
   '@alloc/quick-lru@5.2.0': {}
+
+  '@anam-ai/js-sdk@4.7.0':
+    dependencies:
+      buffer: 6.0.3
 
   '@babel/code-frame@7.27.1':
     dependencies:

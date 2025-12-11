@@ -2,7 +2,7 @@
 
 import { useRef, useMemo, useEffect } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { OrbitControls, PerspectiveCamera } from '@react-three/drei';
+import { OrbitControls, PerspectiveCamera, Text } from '@react-three/drei';
 import { Points, BufferGeometry, Float32BufferAttribute, Vector3 } from 'three';
 import StickFigure from './stick-figure';
 import CouncilTable from './council-table';
@@ -83,7 +83,7 @@ const CameraController = ({ focusIndex, figures }: CameraControllerProps) => {
   const targetLookAt = useRef(new Vector3(0, 0.5, 0));
   
   useEffect(() => {
-    if (focusIndex !== null && figures[focusIndex]) {
+    if (focusIndex !== null && focusIndex < figures.length && figures[focusIndex]) {
       const fig = figures[focusIndex];
       const headY = fig.position[1] + 0.5;
       const distance = 1.2;
@@ -125,11 +125,15 @@ const CameraBreathing = ({ enabled }: { enabled: boolean }) => {
 interface CircleSceneProps {
   focusIndex: number | null;
   arrowIndex: number | null;
+  figureCount?: number;
+  figureColors?: string[];
+  videoElementIds?: string[];
+  figureNames?: string[];
 }
 
-const CircleScene = ({ focusIndex = null, arrowIndex = null }: CircleSceneProps) => {
-  const figureCount = 5;
+const CircleScene = ({ focusIndex = null, arrowIndex = null, figureCount = 5, figureColors: customColors, videoElementIds = [], figureNames = [] }: CircleSceneProps) => {
   const circleRadius = 1.1;
+  const colors = customColors || figureColors;
   
   const figures = useMemo(() => Array.from({ length: figureCount }, (_, i) => {
     const angle = (i / figureCount) * Math.PI * 2 - Math.PI / 2;
@@ -142,9 +146,11 @@ const CircleScene = ({ focusIndex = null, arrowIndex = null }: CircleSceneProps)
     return {
       position: [x, 0, z] as [number, number, number],
       rotation: figureRotation,
-      color: figureColors[i],
+      color: colors[i] || colors[0],
+      videoElementId: videoElementIds[i],
+      name: figureNames[i],
     };
-  }), []);
+  }), [figureCount, colors, videoElementIds, figureNames]);
 
   const isFocused = focusIndex !== null;
 
@@ -177,6 +183,8 @@ const CircleScene = ({ focusIndex = null, arrowIndex = null }: CircleSceneProps)
             position={figure.position}
             rotation={figure.rotation}
             color={figure.color}
+            videoElementId={figure.videoElementId}
+            name={figure.name}
           />
           {arrowIndex === index && (
             <HoverArrow position={[figure.position[0], figure.position[1] + 0.85, figure.position[2]]} />

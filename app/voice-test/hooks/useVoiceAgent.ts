@@ -1,0 +1,389 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
+import { useAudioPlayer } from "./useAudioPlayer";
+import { useAudioRecorder } from "./useAudioRecorder";
+import { useConversationCoordinator } from "./useConversationCoordinator";
+
+export type ConnectionState = "disconnected" | "connecting" | "connected" | "error";
+export type ConversationState = "idle" | "listening" | "speaking";
+
+interface ConversationInitiatedMessage {
+  type: "conversation_initiation_metadata";
+  conversation_initiation_metadata_event: {
+    conversation_id: string;
+  };
+}
+
+interface UseVoiceAgentOptions {
+  agentId: string;
+  agentName?: string;
+  autoConnect?: boolean;
+}
+
+export function useVoiceAgent({
+  agentId,
+  agentName = "Agent",
+  autoConnect = false,
+}: UseVoiceAgentOptions) {
+  const [connectionState, setConnectionState] =
+    useState<ConnectionState>("disconnected");
+  const [conversationState, setConversationState] =
+    useState<ConversationState>("idle");
+  const [conversationId, setConversationId] = useState<string | null>(null);
+
+  const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const currentResponseRef = useRef<string>("");
+  const pendingAudioChunks = useRef<string[]>([]); // Buffer for audio chunks when permission is denied
+  const isCurrentlySpeaking = useRef(false); // Track if this agent is currently speaking
+
+  const coordinator = useConversationCoordinator();
+  const audioPlayer = useAudioPlayer();
+  
+  // Set up permission management callbacks
+  useEffect(() => {
+    audioPlayer.setCallbacks({
+      onPlaybackStart: () => {
+        console.log(`🎤 [${agentName}] Playback started`);
+        isCurrentlySpeaking.current = true;
+      },
+      onPlaybackEnd: () => {
+        console.log(`🎤 [${agentName}] Playback ended, releasing permission`);
+        isCurrentlySpeaking.current = false;
+        coordinator.releaseOutputPermission(agentId);
+      },
+    });
+  }, [agentId, agentName, coordinator, audioPlayer]);
+  
+  const sendAudioData = useCallback((base64Audio: string) => {
+    // Simply send all audio to ElevenLabs
+    // The agent will hear everything (user + other agents) and decide when to respond
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(
+        JSON.stringify({
+          user_audio_chunk: base64Audio,
+        })
+      );
+    }
+  }, []);
+
+  const audioRecorder = useAudioRecorder({
+    onAudioData: sendAudioData,
+    enabled: true, // Always enabled - agents should always listen
+  });
+
+  // Update conversation state based on playback
+  useEffect(() => {
+    if (audioPlayer.playbackState === "playing") {
+      console.log(`🔊 [${agentName}] Speaking`);
+      setConversationState("speaking");
+      coordinator.setCurrentSpeaker(agentId);
+    } else if (audioPlayer.playbackState === "idle") {
+      // Clear speaker if we were the one speaking
+      if (coordinator.getCurrentSpeaker() === agentId) {
+        coordinator.setCurrentSpeaker(null);
+      }
+      
+      if (audioRecorder.recordingState === "recording") {
+        setConversationState("listening");
+      } else {
+        setConversationState("idle");
+      }
+    }
+  }, [audioPlayer.playbackState, audioRecorder.recordingState, agentId, agentName, coordinator]);
+
+  const connect = useCallback(async () => {
+    try {
+      console.log(`🔌 [${agentName}] Starting connection...`);
+      setConnectionState("connecting");
+
+      // Clear any existing reconnect timeout
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+
+      // Get signed URL from our API
+      console.log(`🔑 [${agentName}] Fetching signed URL...`);
+      const response = await fetch("/api/voice/conversation");
+      const data = await response.json();
+
+      if (!data.signedUrl) {
+        throw new Error("Failed to get signed URL");
+      }
+
+      console.log(`🔗 [${agentName}] Creating WebSocket connection...`);
+      // Create WebSocket connection
+      const ws = new WebSocket(data.signedUrl);
+      wsRef.current = ws;
+
+      ws.onopen = async () => {
+        console.log(`✅ [${agentName}] WebSocket connected (readyState: ${ws.readyState})`);
+        setConnectionState("connected");
+        toast.success(`${agentName} connected`);
+
+        // Start microphone
+        console.log(`🎤 [${agentName}] Starting microphone...`);
+        await audioRecorder.startRecording();
+
+        // Note: ElevenLabs WebSocket doesn't require keepalive pings
+        // The connection stays alive as long as we're sending audio data
+        console.log(`✅ [${agentName}] Connection established, audio streaming active`)
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          // Handle binary data (audio)
+          if (event.data instanceof Blob) {
+            console.log(`[${agentName}] Received binary audio blob`);
+            event.data.arrayBuffer().then((buffer) => {
+              const base64 = btoa(
+                String.fromCharCode(...new Uint8Array(buffer))
+              );
+              audioPlayer.playAudioChunk(base64);
+            });
+            return;
+          }
+
+          const message = JSON.parse(event.data);
+          console.log(`📨 [${agentName}] Message type:`, message.type);
+
+          // Handle conversation initiation
+          if (message.type === "conversation_initiation_metadata") {
+            const initMessage = message as ConversationInitiatedMessage;
+            setConversationId(
+              initMessage.conversation_initiation_metadata_event.conversation_id
+            );
+            console.log(
+              `✅ [${agentName}] Conversation started:`,
+              initMessage.conversation_initiation_metadata_event.conversation_id
+            );
+          }
+
+          // Handle audio in various formats
+          let audioBase64: string | null = null;
+          
+          if (message.audio) {
+            audioBase64 = message.audio;
+          } else if (
+            message.type === "audio" &&
+            message.audio_event?.audio_base_64
+          ) {
+            audioBase64 = message.audio_event.audio_base_64;
+          } else if (message.type === "audio" && message.audio_event?.chunk) {
+            audioBase64 = message.audio_event.chunk;
+          } else if (
+            message.type === "agent_response" &&
+            message.agent_response_event?.audio
+          ) {
+            audioBase64 = message.agent_response_event.audio;
+          }
+          
+          if (audioBase64) {
+            // Check if we're already speaking (have permission and are playing)
+            if (isCurrentlySpeaking.current) {
+              // We're already playing, just add to our queue
+              console.log(`🎵 [${agentName}] Adding audio chunk to active queue`);
+              audioPlayer.playAudioChunk(audioBase64);
+            } else {
+              // Not speaking yet - try to get permission first
+              const granted = coordinator.requestOutputPermission(agentId, () => {
+                console.log(`✅ [${agentName}] Permission granted from queue, playing ${pendingAudioChunks.current.length} pending chunks`);
+                isCurrentlySpeaking.current = true;
+                
+                // Play all pending chunks
+                const chunks = pendingAudioChunks.current;
+                pendingAudioChunks.current = [];
+                
+                chunks.forEach(chunk => {
+                  audioPlayer.playAudioChunk(chunk);
+                });
+              });
+              
+              if (granted) {
+                isCurrentlySpeaking.current = true;
+                console.log(`✅ [${agentName}] Permission granted immediately, playing audio chunk`);
+                audioPlayer.playAudioChunk(audioBase64);
+              } else {
+                // Buffer this chunk - we're in the waiting queue
+                console.log(`⏳ [${agentName}] Permission denied, buffering chunk (${pendingAudioChunks.current.length + 1} total pending)`);
+                pendingAudioChunks.current.push(audioBase64);
+              }
+            }
+          }
+
+          // Handle interruption
+          if (message.type === "interruption") {
+            console.log(`⚠️ [${agentName}] Interruption detected`);
+            audioPlayer.clearQueue();
+          }
+
+          // Handle agent response text
+          if (message.type === "agent_response") {
+            const responseText = message.agent_response_event?.agent_response;
+            console.log(`💬 [${agentName}] Response:`, responseText);
+            
+            if (responseText) {
+              currentResponseRef.current = responseText;
+            }
+          }
+          
+          // Handle agent response completion - add to conversation history
+          if (message.type === "agent_response_correction" || 
+              (message.type === "audio" && message.audio_event?.event_id)) {
+            if (currentResponseRef.current) {
+              coordinator.addMessage({
+                agentId,
+                agentName,
+                text: currentResponseRef.current,
+                timestamp: Date.now(),
+              });
+              currentResponseRef.current = "";
+            }
+          }
+        } catch (error) {
+          console.error(`❌ [${agentName}] Error parsing message:`, error);
+        }
+      };
+
+      ws.onerror = (error) => {
+        console.error(`❌ [${agentName}] WebSocket error:`, error);
+        setConnectionState("error");
+        toast.error(`${agentName} connection error`);
+      };
+
+      ws.onclose = (event) => {
+        console.log(`🔌 [${agentName}] WebSocket closed - Code: ${event.code}, Reason: ${event.reason || "No reason provided"}, Clean: ${event.wasClean}`);
+        console.trace(`📍 [${agentName}] WebSocket close stack trace`);
+        
+        console.log(`🔄 [${agentName}] Updating state to disconnected`);
+        setConnectionState("disconnected");
+        setConversationState("idle");
+        audioRecorder.stopRecording();
+        
+        // Provide more informative messages based on close code
+        if (event.code === 1000) {
+          // Normal closure
+          if (event.reason === "Component unmounted") {
+            console.log(`🧹 [${agentName}] Connection closed due to component unmount`);
+          } else if (event.reason === "User disconnected") {
+            console.log(`👤 [${agentName}] Connection closed by user action`);
+          } else {
+            console.log(`✅ [${agentName}] Normal connection closure`);
+          }
+          toast.message(`${agentName} disconnected`);
+        } else if (event.code === 1006) {
+          // Abnormal closure (no close frame)
+          toast.error(`${agentName} connection lost unexpectedly`);
+          console.error(`❌ [${agentName}] Abnormal closure - possible network issue or server timeout`);
+        } else if (event.code === 1008) {
+          // Invalid message
+          toast.error(`${agentName} disconnected: Invalid message format`);
+          console.error(`❌ [${agentName}] Server rejected a message - Code 1008: ${event.reason}`);
+        } else if (event.code >= 4000) {
+          // Custom error codes
+          toast.error(`${agentName} disconnected: ${event.reason || "Server error"}`);
+        } else {
+          toast.error(`${agentName} disconnected unexpectedly`);
+          console.error(`❌ [${agentName}] Unexpected close code: ${event.code}`);
+        }
+      };
+    } catch (error) {
+      console.error(`[${agentName}] Failed to connect:`, error);
+      setConnectionState("error");
+      toast.error(
+        error instanceof Error ? error.message : `${agentName} failed to connect`
+      );
+    }
+  }, [agentId, agentName, audioRecorder, audioPlayer, coordinator]);
+
+  const disconnect = useCallback(() => {
+    console.log(`🔌 [${agentName}] Disconnect called`);
+
+    // Clear reconnect timeout
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
+
+    // Close WebSocket
+    if (wsRef.current) {
+      console.log(`🔌 [${agentName}] Closing WebSocket (readyState: ${wsRef.current.readyState})`);
+      wsRef.current.close(1000, "User disconnected");
+      wsRef.current = null;
+    }
+
+    // Clear pending audio chunks and reset state
+    pendingAudioChunks.current = [];
+    isCurrentlySpeaking.current = false;
+
+    audioRecorder.stopRecording();
+    setConversationId(null);
+  }, [agentName, audioRecorder]);
+
+  // Register with coordinator and cleanup on unmount
+  useEffect(() => {
+    console.log(`🎬 [${agentName}] useVoiceAgent mounted`);
+    coordinator.registerAgent(agentId, agentName);
+    
+    // DISABLED: Don't route other agents' audio to this agent's microphone
+    // This prevents agents from responding to each other in a loop
+    // Agents should only hear and respond to the USER's voice
+    const unsubscribe = coordinator.subscribeToAgentOutputs(agentId, (output) => {
+      // Do nothing - agents don't hear each other
+      // They only hear the user through their shared microphone
+    });
+    
+    return () => {
+      console.log(`🧹 [${agentName}] useVoiceAgent unmounting - cleaning up`);
+
+      // Unsubscribe from audio
+      unsubscribe();
+      
+      // Unregister from coordinator
+      coordinator.unregisterAgent(agentId);
+
+      // Clear reconnect timeout
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+
+      // Close WebSocket
+      if (wsRef.current) {
+        wsRef.current.close(1000, "Component unmounted");
+        wsRef.current = null;
+      }
+
+      // Clear pending audio chunks and reset state
+      pendingAudioChunks.current = [];
+      isCurrentlySpeaking.current = false;
+
+      // Stop recording and cleanup audio
+      audioRecorder.stopRecording();
+      audioPlayer.cleanup();
+      audioRecorder.cleanup();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Empty deps - only run on mount/unmount
+
+  // Auto-connect if enabled
+  useEffect(() => {
+    if (autoConnect && connectionState === "disconnected") {
+      connect();
+    }
+  }, [autoConnect, connectionState, connect]);
+
+  return {
+    connectionState,
+    conversationState,
+    conversationId,
+    isMuted: audioRecorder.isMuted,
+    connect,
+    disconnect,
+    toggleMute: audioRecorder.toggleMute,
+    audioContext: audioPlayer.audioContext,
+    queueLength: audioPlayer.queueLength,
+    isPlaying: audioPlayer.isPlaying,
+  };
+}

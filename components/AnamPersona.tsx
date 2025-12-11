@@ -8,6 +8,7 @@ interface AnamPersonaProps {
   onClientReady?: (client: any) => void;
   inputStream?: MediaStream;
   onOutputStreamReady?: (outputStream: MediaStream) => void;
+  onStartSessionReady?: (startFn: () => Promise<void>) => void;
   muted?: boolean;
 }
 
@@ -16,12 +17,14 @@ export default function AnamPersona({
   onClientReady,
   inputStream,
   onOutputStreamReady,
+  onStartSessionReady,
   muted,
 }: AnamPersonaProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isSessionActive, setIsSessionActive] = useState(false);
   const [status, setStatus] = useState('Ready to start');
   const [anamClient, setAnamClient] = useState<any>(null);
+  const startSessionRef = useRef<(() => Promise<void>) | null>(null);
 
   const startSession = async () => {
     try {
@@ -86,6 +89,17 @@ export default function AnamPersona({
       }
     }
   };
+
+  // Expose startSession function to parent (only once)
+  const startSessionExposedRef = useRef(false);
+  
+  useEffect(() => {
+    startSessionRef.current = startSession;
+    if (onStartSessionReady && !isSessionActive && !startSessionExposedRef.current) {
+      startSessionExposedRef.current = true;
+      onStartSessionReady(startSession);
+    }
+  }, [onStartSessionReady, isSessionActive]);
 
   // Cleanup on unmount
   useEffect(() => {
