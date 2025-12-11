@@ -8,6 +8,7 @@ interface AnamPersonaProps {
   onClientReady?: (client: any) => void;
   inputStream?: MediaStream;
   onOutputStreamReady?: (outputStream: MediaStream) => void;
+  muted?: boolean;
 }
 
 export default function AnamPersona({
@@ -15,6 +16,7 @@ export default function AnamPersona({
   onClientReady,
   inputStream,
   onOutputStreamReady,
+  muted,
 }: AnamPersonaProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isSessionActive, setIsSessionActive] = useState(false);
@@ -103,6 +105,7 @@ export default function AnamPersona({
           autoPlay
           playsInline
           crossOrigin="anonymous"
+          muted={muted}
           className="w-full h-full object-cover"
         />
         {!isSessionActive && (

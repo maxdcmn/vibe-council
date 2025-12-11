@@ -134,6 +134,7 @@ export default function Council() {
             onClientReady={setClientA}
             inputStream={inputStreamA}
             onOutputStreamReady={handleOutputStreamA}
+            muted={true}
           />
           <div className="mt-2">
             <div className="text-xs text-center mb-1">Output Audio Level</div>
@@ -155,6 +156,7 @@ export default function Council() {
             onClientReady={setClientB}
             inputStream={inputStreamB}
             onOutputStreamReady={handleOutputStreamB}
+            muted={true}
           />
           <div className="mt-2">
             <div className="text-xs text-center mb-1">Output Audio Level</div>
