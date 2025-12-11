@@ -1,60 +1,88 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import AnamPersona from './AnamPersona';
 
+interface Agent {
+  id: string;
+  name: string;
+  systemPrompt: string;
+  inputStream?: MediaStream;
+  audioLevel: number;
+  isSpeaking: boolean;
+  client?: any; // Store the Anam client
+}
+
+const SYSTEM_PROMPT_TEMPLATE = (agentName: string, userName: string, topic: string) => `
+You are ${agentName}.
+You are in a group conversation (The Council) with a human user named ${userName} and other AI agents.
+Your Goal: Discuss the topic "${topic || 'General Chat'}".
+
+PROTOCOL:
+1. LISTEN: Do not interrupt. Wait for the current speaker to finish.
+2. ADDRESS: When you speak, address others by name (e.g., "That's a good point, ${userName}..." or "I disagree, Optimist...").
+3. PASS THE MIC: End your turn by asking a question or inviting someone else to speak.
+4. BE CONCISE: Keep your responses short (under 2 sentences) to allow flow.
+5. STAY IN CHARACTER.
+`;
+
+const PERSONAS = [
+  { name: 'The Optimist', basePrompt: 'You are an eternal optimist. You see the bright side of everything.' },
+  { name: 'The Pessimist', basePrompt: 'You are a grumpy pessimist. You find flaws in everything.' },
+  { name: 'The Realist', basePrompt: 'You are a pragmatist. You focus on facts and practical solutions.' },
+  { name: 'The Joker', basePrompt: 'You are a comedian. You make jokes about everything.' },
+  { name: 'The Philosopher', basePrompt: 'You are a deep thinker. You ask existential questions.' },
+];
+
 export default function Council() {
-  const [clientA, setClientA] = useState<any>(null);
-  const [clientB, setClientB] = useState<any>(null);
+  const [agents, setAgents] = useState<Agent[]>([]);
   const [logs, setLogs] = useState<string[]>([]);
-  const [isCouncilActive, setIsCouncilActive] = useState(false);
+  const [isAudioInitialized, setIsAudioInitialized] = useState(false);
+  const [activeSpeakerId, setActiveSpeakerId] = useState<string | null>(null);
+  const [topic, setTopic] = useState('The Future of AI');
+  const [userName, setUserName] = useState('User');
 
-  // Input streams for the agents (what they hear)
-  const [inputStreamA, setInputStreamA] = useState<MediaStream | undefined>(undefined);
-  const [inputStreamB, setInputStreamB] = useState<MediaStream | undefined>(undefined);
-
-  // Audio Context and Nodes
+  // Audio Graph Refs
   const audioContextRef = useRef<AudioContext | null>(null);
-  const destARef = useRef<MediaStreamAudioDestinationNode | null>(null);
-  const destBRef = useRef<MediaStreamAudioDestinationNode | null>(null);
   const userSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
-  const agentASourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
-  const agentBSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const agentsRef = useRef<Agent[]>([]); // Ref to track agents for audio loop access
+  
+  // Map agent ID to their audio nodes
+  const agentInputDestinations = useRef<Map<string, MediaStreamAudioDestinationNode>>(new Map());
+  const agentOutputSources = useRef<Map<string, MediaStreamAudioSourceNode>>(new Map());
+  const agentGainNodes = useRef<Map<string, GainNode>>(new Map());
 
-  const [audioLevelA, setAudioLevelA] = useState(0);
-  const [audioLevelB, setAudioLevelB] = useState(0);
+  // Moderator State
+  const activeSpeakerRef = useRef<string | null>(null);
+  const lastActiveTimeRef = useRef<number>(0);
+  const SPEAKING_THRESHOLD = 10; 
+  const SILENCE_TIMEOUT = 1000; 
 
   const log = (msg: string) => {
     setLogs((prev) => [...prev, `${new Date().toLocaleTimeString()}: ${msg}`]);
   };
 
+  // Initialize Audio Context and User Mic
   const initializeAudio = async () => {
     try {
+      if (audioContextRef.current) return;
+
       log('Initializing Audio Context...');
       const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
       audioContextRef.current = audioCtx;
 
-      // Create destinations (inputs for agents)
-      const destA = audioCtx.createMediaStreamDestination();
-      const destB = audioCtx.createMediaStreamDestination();
-      destARef.current = destA;
-      destBRef.current = destB;
-
-      // Set these as inputs for the agents
-      setInputStreamA(destA.stream);
-      setInputStreamB(destB.stream);
-
-      // Get User Microphone
       const userStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const userSource = audioCtx.createMediaStreamSource(userStream);
       userSourceRef.current = userSource;
 
-      // Connect User to both agents
-      userSource.connect(destA);
-      userSource.connect(destB);
+      setIsAudioInitialized(true);
+      log('Audio initialized. Ready to add agents.');
+      
+      // Add first agent automatically
+      addAgent();
 
-      log('Audio initialized. User mic connected to agents. Please start agents.');
-      setIsCouncilActive(true);
+      // Start Moderator Loop
+      startModeratorLoop();
 
     } catch (error) {
       console.error('Failed to setup audio:', error);
@@ -62,41 +90,145 @@ export default function Council() {
     }
   };
 
-  const handleOutputStreamA = (stream: MediaStream) => {
-    if (!audioContextRef.current || !destBRef.current) return;
-    log('Received Output Stream from Optimist');
+  const startModeratorLoop = () => {
+    const loop = () => {
+        const now = Date.now();
+        
+        // Check if we should release the floor
+        if (activeSpeakerRef.current && (now - lastActiveTimeRef.current > SILENCE_TIMEOUT)) {
+            activeSpeakerRef.current = null;
+            setActiveSpeakerId(null);
+            
+            // Unmute everyone
+            agentGainNodes.current.forEach(gain => {
+                gain.gain.setTargetAtTime(1.0, audioContextRef.current!.currentTime, 0.1);
+            });
+        }
+
+        requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+  };
+
+  const addAgent = () => {
+    if (!audioContextRef.current || !userSourceRef.current) {
+      log('Please initialize audio first.');
+      return;
+    }
+
+    const id = Math.random().toString(36).substring(7);
+    const persona = PERSONAS[agents.length % PERSONAS.length];
     
-    const ctx = audioContextRef.current;
-    const source = ctx.createMediaStreamSource(stream);
-    agentASourceRef.current = source;
+    log(`Adding agent: ${persona.name}`);
 
-    // Route Optimist -> Pessimist
-    source.connect(destBRef.current);
-    // Route Optimist -> User Speakers
-    source.connect(ctx.destination);
+    // 1. Create Input Destination for this agent (The "Ear")
+    const inputDest = audioContextRef.current.createMediaStreamDestination();
+    agentInputDestinations.current.set(id, inputDest);
 
-    setupAnalyzer(source, setAudioLevelA);
+    // 2. Connect User Mic -> Agent Ear
+    userSourceRef.current.connect(inputDest);
+
+    // 3. Connect ALL existing agents' outputs -> New Agent Ear
+    agentGainNodes.current.forEach((gainNode) => {
+      gainNode.connect(inputDest);
+    });
+
+    // 4. Update State
+    setAgents((prev) => {
+        const newAgents = [
+            ...prev,
+            {
+                id,
+                name: persona.name,
+                systemPrompt: persona.basePrompt + SYSTEM_PROMPT_TEMPLATE(persona.name, userName, topic),
+                inputStream: inputDest.stream,
+                audioLevel: 0,
+                isSpeaking: false,
+            },
+        ];
+        agentsRef.current = newAgents;
+        return newAgents;
+    });
   };
 
-  const handleOutputStreamB = (stream: MediaStream) => {
-    if (!audioContextRef.current || !destARef.current) return;
-    log('Received Output Stream from Pessimist');
+  const removeAgent = (id: string) => {
+    log(`Removing agent ${id}`);
+    
+    agentInputDestinations.current.delete(id);
 
-    const ctx = audioContextRef.current;
-    const source = ctx.createMediaStreamSource(stream);
-    agentBSourceRef.current = source;
+    const outputSource = agentOutputSources.current.get(id);
+    outputSource?.disconnect();
+    agentOutputSources.current.delete(id);
 
-    // Route Pessimist -> Optimist
-    source.connect(destARef.current);
-    // Route Pessimist -> User Speakers
-    source.connect(ctx.destination);
+    const gainNode = agentGainNodes.current.get(id);
+    gainNode?.disconnect();
+    agentGainNodes.current.delete(id);
 
-    setupAnalyzer(source, setAudioLevelB);
+    setAgents((prev) => {
+        const newAgents = prev.filter((a) => a.id !== id);
+        agentsRef.current = newAgents;
+        return newAgents;
+    });
   };
 
-  const setupAnalyzer = (source: AudioNode, setLevel: (level: number) => void) => {
+  const handleClientReady = (id: string, client: any) => {
+    setAgents(prev => {
+        const newAgents = prev.map(a => a.id === id ? { ...a, client } : a);
+        agentsRef.current = newAgents;
+        return newAgents;
+    });
+  };
+
+  const handleOutputStream = useCallback((agentId: string, stream: MediaStream) => {
+    if (!audioContextRef.current) return;
+    
+    if (agentOutputSources.current.has(agentId)) return;
+
+    log(`Received audio output from agent ${agentId}`);
+    const ctx = audioContextRef.current;
+    const source = ctx.createMediaStreamSource(stream);
+    agentOutputSources.current.set(agentId, source);
+
+    // Create Gain Node for this agent (The "Mouth Control")
+    const gainNode = ctx.createGain();
+    gainNode.gain.value = 1.0;
+    agentGainNodes.current.set(agentId, gainNode);
+
+    // Connect Source -> Gain
+    source.connect(gainNode);
+
+    // 1. Connect Gain -> User Speakers
+    gainNode.connect(ctx.destination);
+
+    // 2. Connect Gain -> ALL OTHER Agents' Ears
+    agentInputDestinations.current.forEach((dest, otherId) => {
+      if (otherId !== agentId) {
+        gainNode.connect(dest);
+      }
+    });
+
+    // 3. Setup Analyzer
+    setupAnalyzer(source, agentId);
+  }, []);
+
+  const broadcastContext = (message: string, excludeId?: string) => {
+    agentsRef.current.forEach(agent => {
+        if (agent.id !== excludeId && agent.client) {
+            try {
+                // Send a "system" message to the agent
+                // We use talk() but prefix it to indicate it's a system event
+                agent.client.talk(`[System Event: ${message}]`);
+            } catch (e) {
+                console.error(`Failed to broadcast to ${agent.name}`, e);
+            }
+        }
+    });
+  };
+
+  const setupAnalyzer = (source: AudioNode, agentId: string) => {
     if (!audioContextRef.current) return;
     const analyser = audioContextRef.current.createAnalyser();
+    analyser.fftSize = 256;
     source.connect(analyser);
     
     const data = new Uint8Array(analyser.frequencyBinCount);
@@ -104,107 +236,138 @@ export default function Council() {
         analyser.getByteFrequencyData(data);
         const sum = data.reduce((a, b) => a + b, 0);
         const avg = sum / data.length;
-        setLevel(avg);
+
+        // Moderator Logic
+        if (avg > SPEAKING_THRESHOLD) {
+            lastActiveTimeRef.current = Date.now();
+            
+            if (!activeSpeakerRef.current) {
+                activeSpeakerRef.current = agentId;
+                setActiveSpeakerId(agentId);
+                
+                // Find speaker name
+                const speaker = agentsRef.current.find(a => a.id === agentId);
+                if (speaker) {
+                    log(`${speaker.name} took the floor!`);
+                    broadcastContext(`${speaker.name} has started speaking. Listen to them.`, agentId);
+                }
+                
+                agentGainNodes.current.forEach((gain, id) => {
+                    if (id !== agentId) {
+                        gain.gain.setTargetAtTime(0.0, audioContextRef.current!.currentTime, 0.1);
+                    }
+                });
+            }
+        }
+
+        setAgents((prev) => 
+            prev.map((a) => (a.id === agentId ? { ...a, audioLevel: avg, isSpeaking: activeSpeakerRef.current === agentId } : a))
+        );
         requestAnimationFrame(update);
     };
     requestAnimationFrame(update);
   };
 
-  const stopCouncil = () => {
-    setIsCouncilActive(false);
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
-      audioContextRef.current = null;
-    }
-    setInputStreamA(undefined);
-    setInputStreamB(undefined);
-    log('Council stopped.');
-  };
-
   return (
     <div className="flex flex-col gap-8">
-      <div className="flex flex-col md:flex-row gap-4 justify-center">
-        <div className="flex-1">
-          <h2 className="text-xl font-bold text-center mb-2">The Optimist</h2>
-          <AnamPersona
-            personaConfig={{
-              name: 'Optimist',
-              systemPrompt: 'You are an eternal optimist. You see the bright side of everything. You are talking to a pessimist and a human user.',
-            }}
-            onClientReady={setClientA}
-            inputStream={inputStreamA}
-            onOutputStreamReady={handleOutputStreamA}
-            muted={true}
-          />
-          <div className="mt-2">
-            <div className="text-xs text-center mb-1">Output Audio Level</div>
-            <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-                <div 
-                    className="h-full bg-green-500 transition-all duration-100" 
-                    style={{ width: `${Math.min(100, audioLevelA * 2)}%` }}
+      
+      {/* Controls */}
+      <div className="flex flex-col items-center gap-4 sticky top-0 bg-white/80 backdrop-blur-sm p-4 z-10 border-b">
+        
+        {/* Topic Input */}
+        <div className="flex flex-wrap justify-center gap-4 w-full max-w-2xl">
+            <div className="flex items-center gap-2">
+                <label className="font-bold whitespace-nowrap">Topic:</label>
+                <input 
+                    type="text" 
+                    value={topic} 
+                    onChange={(e) => setTopic(e.target.value)}
+                    className="border rounded px-2 py-1 w-64"
+                    placeholder="Enter a topic..."
                 />
             </div>
-          </div>
-        </div>
-        <div className="flex-1">
-          <h2 className="text-xl font-bold text-center mb-2">The Pessimist</h2>
-          <AnamPersona
-            personaConfig={{
-              name: 'Pessimist',
-              systemPrompt: 'You are a grumpy pessimist. You find flaws in everything. You are talking to an optimist and a human user.',
-            }}
-            onClientReady={setClientB}
-            inputStream={inputStreamB}
-            onOutputStreamReady={handleOutputStreamB}
-            muted={true}
-          />
-          <div className="mt-2">
-            <div className="text-xs text-center mb-1">Output Audio Level</div>
-            <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-                <div 
-                    className="h-full bg-green-500 transition-all duration-100" 
-                    style={{ width: `${Math.min(100, audioLevelB * 2)}%` }}
+            <div className="flex items-center gap-2">
+                <label className="font-bold whitespace-nowrap">Your Name:</label>
+                <input 
+                    type="text" 
+                    value={userName} 
+                    onChange={(e) => setUserName(e.target.value)}
+                    className="border rounded px-2 py-1 w-32"
+                    placeholder="User"
                 />
             </div>
-          </div>
         </div>
-      </div>
 
-      <div className="flex justify-center gap-4">
-        {!isCouncilActive ? (
-            <button
+        {!isAudioInitialized ? (
+          <button
             onClick={initializeAudio}
-            className="px-6 py-3 bg-blue-600 text-white rounded-lg font-bold"
-            >
-            Initialize Audio
-            </button>
+            className="px-6 py-3 bg-blue-600 text-white rounded-lg font-bold shadow-lg hover:bg-blue-700 transition-colors"
+          >
+            Initialize Audio & Start
+          </button>
         ) : (
-            <div className="text-green-600 font-bold flex items-center gap-2">
-                <span>Audio Active</span>
-                <button
-                onClick={stopCouncil}
-                className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm"
-                >
-                Stop
-                </button>
+          <div className="flex gap-4 items-center">
+             <div className="text-green-600 font-bold flex items-center gap-2 mr-4">
+                <span className="w-3 h-3 bg-green-500 rounded-full animate-pulse"/>
+                Audio Active
             </div>
+            <button
+              onClick={addAgent}
+              className="px-4 py-2 bg-indigo-600 text-white rounded-lg font-bold hover:bg-indigo-700 transition-colors"
+            >
+              + Add Agent
+            </button>
+          </div>
         )}
       </div>
 
-      <div className="bg-slate-100 p-4 rounded-lg max-h-60 overflow-y-auto">
-        <h3 className="font-bold mb-2">System Log</h3>
-        {logs.map((l, i) => (
-          <div key={i} className="text-sm font-mono">{l}</div>
+      {/* Agents Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 px-4">
+        {agents.map((agent) => (
+          <div 
+            key={agent.id} 
+            className={`flex flex-col bg-white p-4 rounded-xl shadow-md border relative transition-all duration-300 ${agent.isSpeaking ? 'ring-4 ring-green-500 scale-105 z-10' : ''}`}
+          >
+            <button 
+                onClick={() => removeAgent(agent.id)}
+                className="absolute top-2 right-2 text-gray-400 hover:text-red-500"
+                title="Remove Agent"
+            >
+                ✕
+            </button>
+            <h2 className="text-lg font-bold text-center mb-2">{agent.name}</h2>
+            <AnamPersona
+              personaConfig={{
+                name: agent.name,
+                systemPrompt: agent.systemPrompt,
+              }}
+              inputStream={agent.inputStream}
+              onOutputStreamReady={(stream) => handleOutputStream(agent.id, stream)}
+              onClientReady={(client) => handleClientReady(agent.id, client)}
+              muted={true}
+            />
+            <div className="mt-3">
+              <div className="flex justify-between text-xs text-muted-foreground mb-1">
+                <span>Output Level</span>
+                <span>{Math.round(agent.audioLevel)}</span>
+              </div>
+              <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                <div 
+                  className={`h-full transition-all duration-75 ease-out ${agent.isSpeaking ? 'bg-green-500' : 'bg-gray-400'}`}
+                  style={{ width: `${Math.min(100, agent.audioLevel * 2)}%` }}
+                />
+              </div>
+            </div>
+          </div>
         ))}
       </div>
-      
-      <div className="text-center text-sm text-muted-foreground">
-        <p>Instructions:</p>
-        <ol className="list-decimal list-inside">
-            <li>Click "Initialize Audio" to setup the mixing.</li>
-            <li>Click "Start Chat" on BOTH agents.</li>
-            <li>Speak! Both you and the agents should hear each other.</li>
-        </ol>
+
+      {/* Logs */}
+      <div className="bg-slate-100 p-4 rounded-lg max-h-40 overflow-y-auto mx-4 text-xs font-mono border">
+        <h3 className="font-bold mb-2 sticky top-0 bg-slate-100">System Log</h3>
+        {logs.map((l, i) => (
+          <div key={i}>{l}</div>
+        ))}
       </div>
     </div>
   );
