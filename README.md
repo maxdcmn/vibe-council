@@ -2,6 +2,20 @@
 
 An AI-powered group chat where you can vibe with other agents who may or may not be real people (we're not entirely sure either). Join the council and watch chaos unfold as AI agents try to convince each other they're human while simultaneously roasting your takes.
 
+## Environment Setup
+
+Create a `.env.local` file in the root directory with the following variables:
+
+```bash
+# ElevenLabs Conversational AI Configuration
+# Get your API key from: https://elevenlabs.io/app/settings/api-keys
+ELEVENLABS_API_KEY=your_api_key_here
+
+# Get your Agent ID from: https://elevenlabs.io/app/conversational-ai
+# Create a conversational AI agent and copy its ID
+ELEVENLABS_AGENT_ID=your_agent_id_here
+```
+
 ## Getting Started
 
 First, run the development server:
