@@ -46,12 +46,10 @@ const VideoHead = ({ position, radius, color, videoElementId }: { position: [num
         return false;
       }
 
-      console.log(`Video element found:`, {
-        id: videoElementId,
+      console.log(`Video element found: ${videoElementId}`, {
         readyState: videoElement.readyState,
         videoWidth: videoElement.videoWidth,
         videoHeight: videoElement.videoHeight,
-        srcObject: videoElement.srcObject,
       });
 
       if (videoElement.readyState >= 2 && videoElement.videoWidth > 0) {
@@ -71,11 +69,7 @@ const VideoHead = ({ position, radius, color, videoElementId }: { position: [num
         textureRef.current = texture;
         setVideoTexture(texture);
         
-        console.log(`Video texture created successfully for ${videoElementId}`, {
-          texture,
-          image: texture.image,
-          needsUpdate: texture.needsUpdate
-        });
+        console.log(`Video texture created successfully for ${videoElementId}`);
         return true;
       }
       

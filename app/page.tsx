@@ -349,7 +349,7 @@ export default function Index() {
 
   const broadcastContext = (message: string, excludeId?: string) => {
     agentsRef.current.forEach(agent => {
-      if (agent.id !== excludeId && agent.client) {
+      if (agent.id !== excludeId && agent.client && connectedSessions.has(agent.id)) {
         try {
           agent.client.talk(`[System Event: ${message}]`);
         } catch (e) {
