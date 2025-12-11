@@ -6,6 +6,7 @@ import AnamPersona from './AnamPersona';
 interface Agent {
   id: string;
   name: string;
+  basePrompt: string; // Store base prompt for updates
   systemPrompt: string;
   inputStream?: MediaStream;
   audioLevel: number;
@@ -14,17 +15,19 @@ interface Agent {
   startSession?: () => Promise<void>; // Store the start session function
 }
 
-const SYSTEM_PROMPT_TEMPLATE = (agentName: string, userName: string, topic: string) => `
+const SYSTEM_PROMPT_TEMPLATE = (agentName: string, userName: string, topic: string, participants: string) => `
 You are ${agentName}.
 You are in a group conversation (The Council) with a human user named ${userName} and other AI agents.
+Current Participants: ${participants}.
 Your Goal: Discuss the topic "${topic || 'General Chat'}".
 
-PROTOCOL:
-1. LISTEN: Do not interrupt. Wait for the current speaker to finish.
-2. ADDRESS: When you speak, address others by name (e.g., "That's a good point, ${userName}..." or "I disagree, Optimist...").
-3. PASS THE MIC: End your turn by asking a question or inviting someone else to speak.
-4. BE CONCISE: Keep your responses short (under 2 sentences) to allow flow.
+STRICT PROTOCOL:
+1. ONLY SPEAK WHEN SPOKEN TO: Do not speak unless you are explicitly addressed by name or if the previous speaker asked a question relevant to your perspective.
+2. PASS THE MIC: You MUST end your turn by asking a specific question to another agent or the user. Use their name.
+3. BE CONCISE: Keep your responses short (under 2 sentences).
+4. NO NAME PREFIX: DO NOT start your response with your name (e.g., "Optimist: ..."). Just speak.
 5. STAY IN CHARACTER.
+6. MANDATORY: If you receive a message starting with [SYSTEM UPDATE], you must process it silently. DO NOT output any text or speech in response.
 `;
 
 const PERSONAS = [
@@ -141,13 +144,18 @@ export default function Council() {
             {
                 id,
                 name: persona.name,
-                systemPrompt: persona.basePrompt + SYSTEM_PROMPT_TEMPLATE(persona.name, userName, topic),
+                basePrompt: persona.basePrompt,
+                systemPrompt: persona.basePrompt + SYSTEM_PROMPT_TEMPLATE(persona.name, userName, topic, `${userName}, ${prev.map(a => a.name).join(', ')}, ${persona.name}`),
                 inputStream: inputDest.stream,
                 audioLevel: 0,
                 isSpeaking: false,
             },
         ];
         agentsRef.current = newAgents;
+        
+        // Announce new participant list (Silent Update)
+        setTimeout(() => announceParticipants(newAgents), 500);
+        
         return newAgents;
     });
   };
@@ -168,8 +176,28 @@ export default function Council() {
     setAgents((prev) => {
         const newAgents = prev.filter((a) => a.id !== id);
         agentsRef.current = newAgents;
+
+        // Announce new participant list (Silent Update)
+        setTimeout(() => announceParticipants(newAgents), 500);
+
         return newAgents;
     });
+  };
+
+
+
+  const announceParticipants = (currentAgents: Agent[]) => {
+    const names = [userName, ...currentAgents.map(a => a.name)].join(', ');
+    log(`Participants: ${names}`);
+    
+    // 1. Update State (Source of Truth for future sessions/reconnects)
+    setAgents(prev => prev.map(agent => ({
+        ...agent,
+        systemPrompt: agent.basePrompt + SYSTEM_PROMPT_TEMPLATE(agent.name, userName, topic, names)
+    })));
+
+    // 2. Broadcast (Context Injection for active sessions)
+    broadcastContext(`Participant Update. Current Council: ${names}`);
   };
 
   const handleClientReady = (id: string, client: any) => {
@@ -226,7 +254,7 @@ export default function Council() {
             try {
                 // Send a "system" message to the agent
                 // We use talk() but prefix it to indicate it's a system event
-                agent.client.talk(`[System Event: ${message}]`);
+                //agent.client.talk(`[SYSTEM UPDATE: ${message}. DO NOT RESPOND TO THIS MESSAGE.]`);
             } catch (e) {
                 console.error(`Failed to broadcast to ${agent.name}`, e);
             }
@@ -346,6 +374,10 @@ export default function Council() {
                     placeholder="User"
                 />
             </div>
+        </div>
+
+        <div className="text-xs text-gray-500 italic text-center max-w-lg">
+            Tip: Agents are instructed to only speak when spoken to. Start by saying "Hello [Agent Name]"!
         </div>
 
         {!isAudioInitialized ? (
