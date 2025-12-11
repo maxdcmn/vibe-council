@@ -174,10 +174,25 @@ The signed URL includes a temporary token that expires after a short period (typ
 - [ElevenLabs API Reference](https://elevenlabs.io/docs/api-reference/conversational-ai)
 - [WebSocket Protocol Details](https://elevenlabs.io/docs/conversational-ai/websocket-protocol)
 
+## Multi-Agent System
+
+The voice test page now supports **multiple voice agents connected simultaneously**! 
+
+### Features
+- ✅ Add/remove agents dynamically
+- ✅ Independent WebSocket connections per agent
+- ✅ All agents listen to the same microphone input
+- ✅ Agents respond independently and simultaneously
+- ✅ Individual mute controls per agent
+- ✅ Clean, modular architecture with custom hooks
+
+See `app/voice-test/README.md` for detailed documentation.
+
 ## Next Steps
 
+- [x] Implement multi-agent council (multiple agents in one conversation)
 - [ ] Add conversation history/transcript
-- [ ] Implement multi-agent council (multiple agents in one conversation)
 - [ ] Add voice activity detection (VAD) for better turn-taking
 - [ ] Store conversation analytics
 - [ ] Add custom wake words
+- [ ] Different agent personalities per instance
