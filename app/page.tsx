@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { ArrowRight, Plus, X } from "lucide-react";
+import { X } from "lucide-react";
 
 import CircleScene from "@/components/three/circle-scene";
-import AnamPersona from "@/components/AnamPersona";
+import AnamPersona from "@/components/anam-persona";
 import { Button } from "@/components/ui/button";
 import { ANAM_PERSONAS } from "@/lib/anam-personas";
 import {
@@ -360,6 +360,22 @@ export default function Index() {
   };
 
   const focusAgent = (agentId: string) => {
+    if (activeSpeakerRef.current === agentId) {
+      activeSpeakerRef.current = null;
+      setActiveSpeakerId(null);
+      setFocusIndex(null);
+      setArrowIndex(null);
+
+      agentGainNodes.current.forEach((gain) => {
+        gain.gain.setTargetAtTime(
+          1.0,
+          audioContextRef.current!.currentTime,
+          0.1
+        );
+      });
+      return;
+    }
+
     activeSpeakerRef.current = agentId;
     setActiveSpeakerId(agentId);
     lastActiveTimeRef.current = Date.now();
@@ -435,14 +451,6 @@ export default function Index() {
     }
   };
 
-  const handleArrowChange = (value: string) => {
-    if (value === "none") {
-      setArrowIndex(null);
-    } else {
-      setArrowIndex(parseInt(value, 10));
-    }
-  };
-
   const scenarioIsReady =
     selectedScenario &&
     (selectedScenario !== "custom" || customScenario.trim().length > 0) &&
@@ -471,77 +479,77 @@ export default function Index() {
               isExiting ? "scale-95 opacity-0" : "scale-100 opacity-100"
             }`}
           >
-            <h1 className="mb-3 font-sans text-5xl font-thin tracking-tight text-foreground">
+            <h1 className="font-sans text-5xl font-thin tracking-tight text-foreground">
               Vibe Council
             </h1>
 
             <p className="mb-6 font-sans text-base leading-relaxed text-muted-foreground">
-              Pick a scenario and select your council members.
+              Pick a scenario and meet your council.
             </p>
 
-            <div className="mb-4 flex flex-col gap-3">
-              <div className="flex items-center gap-2">
-                <Input
-                  type="text"
-                  value={userName}
-                  onChange={(e) => setUserName(e.target.value)}
-                  placeholder="Your name..."
-                  className="h-11 flex-1 border-border/30 bg-background/80 px-4 text-base backdrop-blur-sm"
-                />
-              </div>
+              <div className="mb-4 flex flex-col gap-2">
+                <div className="flex items-center">
+                  <Input
+                    type="text"
+                    value={userName}
+                    onChange={(e) => setUserName(e.target.value)}
+                    placeholder="Your name..."
+                    className="flex-1"
+                  />
+                </div>
 
-              <Select
-                value={selectedScenario}
-                onValueChange={setSelectedScenario}
-              >
-                <SelectTrigger className="flex-1 h-11 w-full px-4 text-base">
-                  <SelectValue placeholder="Choose a scenario..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {scenarios.map((scenario) => (
-                    <SelectItem key={scenario.value} value={scenario.value}>
-                      {scenario.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                <Select
+                  value={selectedScenario}
+                  onValueChange={setSelectedScenario}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Choose a scenario..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {scenarios.map((scenario) => (
+                      <SelectItem key={scenario.value} value={scenario.value}>
+                        {scenario.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
 
-              {selectedScenario === "custom" && (
-                <Input
-                  placeholder="Describe your scenario..."
-                  value={customScenario}
-                  onChange={(e) => setCustomScenario(e.target.value)}
-                  className="h-11 w-full border-border/30 bg-background/80 px-4 text-base backdrop-blur-sm"
-                />
-              )}
+                {selectedScenario === "custom" && (
+                  <Input
+                    placeholder="Describe your scenario..."
+                    value={customScenario}
+                    onChange={(e) => setCustomScenario(e.target.value)}
+                  />
+                )}
 
               {/* Persona Selector */}
-              <div className="mt-4">
-                <p className="mb-3 text-sm text-muted-foreground">
-                  Select council members (max 6):
-                </p>
-                <div className="grid grid-cols-2 gap-2">
-                  {PERSONAS.map((persona) => (
-                    <button
-                      key={persona.id}
-                      onClick={() => togglePersona(persona.id)}
-                      disabled={!selectedPersonas.includes(persona.id) && selectedPersonas.length >= 6}
-                      className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-all ${
-                        selectedPersonas.includes(persona.id)
-                          ? 'border-white bg-white/10 text-white'
-                          : 'border-border/30 bg-background/50 text-muted-foreground hover:bg-background/80'
-                      } disabled:cursor-not-allowed disabled:opacity-40`}
-                    >
-                      <div
-                        className="h-3 w-3 rounded-full"
-                        style={{ backgroundColor: persona.color }}
-                      />
-                      <span className="flex-1">{persona.name}</span>
-                      {selectedPersonas.includes(persona.id) && (
-                        <span className="text-xs">✓</span>
-                      )}
-                    </button>
-                  ))}
+              <div>
+                <div className="grid grid-cols-2 gap-2 mb-2 mt-2">
+                  {PERSONAS.map((persona) => {
+                    const isSelected = selectedPersonas.includes(persona.id);
+                    const isDisabled =
+                      !isSelected && selectedPersonas.length >= 6;
+
+                    return (
+                      <Button
+                        key={persona.id}
+                        type="button"
+                        variant={isSelected ? "default" : "outline"}
+                        disabled={isDisabled}
+                        onClick={() => togglePersona(persona.id)}
+                        className="h-9 w-full justify-start gap-2"
+                      >
+                        <div
+                          className="h-3 w-3 rounded-full"
+                          style={{ backgroundColor: persona.color }}
+                        />
+                        <span className="text-sm">{persona.name}</span>
+                        {isSelected && (
+                          <span className="ml-auto text-xs">✓</span>
+                        )}
+                      </Button>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -549,7 +557,7 @@ export default function Index() {
               <Button
                 onClick={handleGetStarted}
                 disabled={!scenarioIsReady}
-                className="w-full h-11 mt-4 bg-black text-white transition-colors hover:bg-black/80 disabled:cursor-not-allowed disabled:opacity-40"
+                className="w-full"
               >
                 Start Council Meeting
               </Button>
@@ -561,12 +569,22 @@ export default function Index() {
       {!showOverlay && isAudioInitialized && (
         <>
           {/* Top Controls */}
-          <div className="absolute right-4 top-4 z-10 flex gap-2">
+          <div className="absolute right-4 top-4 z-10 flex items-center gap-4">
+            {!agents.every(a => connectedSessions.has(a.id)) && (
+              <Button
+                onClick={startAllAgentSessions}
+                disabled={agents.every(a => connectedSessions.has(a.id))}
+                size="sm"
+              >
+                Start chats
+              </Button>
+            )}
+
             <Select
               value={focusIndex !== null ? focusIndex.toString() : "none"}
               onValueChange={handleFocusChange}
             >
-              <SelectTrigger className="w-[140px] bg-background/80 backdrop-blur-sm">
+              <SelectTrigger className="w-[140px]">
                 <SelectValue placeholder="Focus" />
               </SelectTrigger>
               <SelectContent>
@@ -585,17 +603,9 @@ export default function Index() {
               </SelectContent>
             </Select>
 
-            <Button
-              onClick={() => addAgent()}
-              disabled={agents.length >= 6}
-              className="bg-background/80 backdrop-blur-sm hover:bg-background/90"
-              size="icon"
-            >
-              <Plus className="h-4 w-4" />
-            </Button>
           </div>
 
-          {/* Video elements for 3D texture - must be visible for WebGL */}
+          {/* Video elements for 3D texture */}
           <div style={{ 
             position: 'fixed', 
             display: 'none',
@@ -648,66 +658,33 @@ export default function Index() {
 
           {/* Agent Info Panel */}
           <div className="absolute bottom-4 left-4 right-4 z-10">
-            <div className="flex flex-col items-center gap-3">
-              {/* Start All Button */}
-              {!agents.every(a => connectedSessions.has(a.id)) && (
-                <Button
-                  onClick={startAllAgentSessions}
-                  disabled={agents.every(a => connectedSessions.has(a.id))}
-                  className="bg-green-600 hover:bg-green-700 text-white disabled:opacity-50"
+            <div className="flex flex-wrap justify-center gap-10">
+              {agents.map((agent, index) => (
+                <div
+                  key={agent.id}
+                  className="relative flex items-center gap-2"
                 >
-                  Start All Chats
-                </Button>
-              )}
-
-              <div className="flex flex-wrap justify-center gap-3">
-                {agents.map((agent, index) => (
-                  <div
-                    key={agent.id}
-                    className={`relative flex items-center gap-2 bg-background/80 backdrop-blur-sm rounded-lg px-4 py-2 transition-all duration-300 ${
-                      agent.isSpeaking ? 'ring-2 ring-green-500 scale-105' : ''
-                    }`}
+                  <button
+                    type="button"
+                    onClick={() => focusAgent(agent.id)}
+                    className="flex items-center gap-2 text-sm font-semibold text-foreground/80 hover:text-foreground"
                   >
-                    <button
-                      onClick={() => focusAgent(agent.id)}
-                      className="flex items-center gap-2 cursor-pointer hover:opacity-80"
-                    >
+                    <div
+                      className={`h-3 w-3 rounded-full ${connectedSessions.has(agent.id) ? 'animate-pulse' : ''}`}
+                      style={{ backgroundColor: agent.color }}
+                    />
+                    <span>{agent.name}</span>
+                    <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden hidden">
                       <div
-                        className={`h-3 w-3 rounded-full ${connectedSessions.has(agent.id) ? 'animate-pulse' : ''}`}
-                        style={{ backgroundColor: agent.color }}
+                        className={`h-full transition-all duration-75 ${
+                          agent.isSpeaking ? 'bg-green-500' : 'bg-muted-foreground/50'
+                        }`}
+                        style={{ width: `${Math.min(100, agent.audioLevel * 2)}%` }}
                       />
-                      <span className="text-sm font-bold">{agent.name}</span>
-                      <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden hidden">
-                        <div
-                          className={`h-full transition-all duration-75 ${
-                            agent.isSpeaking ? 'bg-green-500' : 'bg-muted-foreground/50'
-                          }`}
-                          style={{ width: `${Math.min(100, agent.audioLevel * 2)}%` }}
-                        />
-                      </div>
-                    </button>
-
-                    <Button
-                      onClick={() => startAgentSession(agent.id)}
-                      disabled={connectedSessions.has(agent.id)}
-                      size="sm"
-                      className="h-7 px-2 text-xs bg-blue-600 hover:bg-blue-700 disabled:opacity-50 hidden"
-                    >
-                      {connectedSessions.has(agent.id) ? '✓ Connected' : 'Connect'}
-                    </Button>
-
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        removeAgent(agent.id);
-                      }}
-                      className="ml-1 text-muted-foreground hover:text-destructive"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </div>
-                ))}
-              </div>
+                    </div>
+                  </button>
+                </div>
+              ))}
             </div>
           </div>
 

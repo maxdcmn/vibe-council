@@ -79,7 +79,7 @@ interface CameraControllerProps {
 
 const CameraController = ({ focusIndex, figures }: CameraControllerProps) => {
   const { camera } = useThree();
-  const targetPosition = useRef(new Vector3(0, 3, 6));
+  const targetPosition = useRef(new Vector3(0, 2.7, 4.5));
   const targetLookAt = useRef(new Vector3(0, 0.5, 0));
   
   useEffect(() => {
@@ -94,7 +94,7 @@ const CameraController = ({ focusIndex, figures }: CameraControllerProps) => {
       targetPosition.current.set(camX, headY, camZ);
       targetLookAt.current.set(fig.position[0], headY, fig.position[2]);
     } else {
-      targetPosition.current.set(0, 3, 6);
+      targetPosition.current.set(0, 2.7, 4.5);
       targetLookAt.current.set(0, 0.5, 0);
     }
   }, [focusIndex, figures]);
@@ -110,7 +110,7 @@ const CameraController = ({ focusIndex, figures }: CameraControllerProps) => {
 };
 
 const CameraBreathing = ({ enabled }: { enabled: boolean }) => {
-  const baseY = useRef(3);
+  const baseY = useRef(2.7);
   
   useFrame((state) => {
     if (enabled) {
@@ -162,7 +162,7 @@ const CircleScene = ({ focusIndex = null, arrowIndex = null, figureCount = 5, fi
     >
       <PerspectiveCamera
         makeDefault
-        position={[0, 3, 6]}
+        position={[0, 2.7, 4.5]}
         fov={50}
         near={0.1}
         far={100}

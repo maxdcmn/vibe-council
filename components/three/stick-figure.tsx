@@ -144,7 +144,7 @@ const VideoHead = ({ position, radius, color, videoElementId }: { position: [num
         <sphereGeometry args={[radius, 32, 32]} />
         <meshBasicMaterial color="#ffffff" side={BackSide} />
       </mesh>
-      {/* Head with video or color - rotated -90 degrees to face table */}
+      {/* Head with video or color*/}
       <mesh ref={meshRef} rotation={[0, -Math.PI / 2, 0]}>
         <sphereGeometry args={[radius, 32, 32]} />
         <meshBasicMaterial 
@@ -186,12 +186,6 @@ const StickFigure = ({ position, rotation = 0, color = "#ffffff", videoElementId
       {/* Floating Name Label */}
       {name && (
         <group position={[0, 1.7, 0]}>
-          {/* Background */}
-          <mesh>
-            <planeGeometry args={[1.5, 0.3]} />
-            <meshBasicMaterial color="#000000" transparent opacity={0.7} />
-          </mesh>
-          {/* Text */}
           <Text
             position={[0, 0, 0.01]}
             fontSize={0.15}
